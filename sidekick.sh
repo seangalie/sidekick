@@ -15,23 +15,76 @@
 set -euo pipefail
 
 check_connection() {
-    echo "I'm a placeholder for a connection check."
-    read -p "Press [Enter] to continue..."
+    ping -c 1 8.8.8.8 &> /dev/null || {
+        echo " Error: No internet connection detected.";
+        exit 1;
+    }
 }
 
 check_sudo() {
-    echo "I'm a placeholder for a root/superuser permissions check."
-    read -p "Press [Enter] to continue..."
+    if ! command -v sudo &> /dev/null; then
+        if [[ $EUID -ne 0 ]]; then
+            echo " Error: This script must be run as root or with sudo privileges."
+            exit 1
+        fi
+        echo ""
+        echo " Info: sudo is not installed. Installing now..."
+        echo ""
+        sleep 1
+        if ! apt update && apt install -y sudo; then
+            echo " Error: Failed to install sudo."
+            exit 1
+        fi
+    fi
+    if [[ $EUID -eq 0 ]]; then
+        USE_SUDO=""
+    else
+        USE_SUDO="sudo"
+    fi
+    export USE_SUDO
 }
 
 check_version() {
-    echo "I'm a placeholder for a Debian version check."
-    read -p "Press [Enter] to continue..."
+    local debian_version_file="/etc/debian_version"
+
+    if [ ! -f "$debian_version_file" ]; then
+        echo " Error: This script is designed to run within Debian-based environments. Your"
+        echo "   environment appears to be missing information needed to validate that this"
+        echo "   environment is compatible with this script."
+        echo ""
+        echo " This error is based on information read from the $debian_version_file file."
+        exit 1
+    fi
+    local debian_version_raw
+    debian_version_raw=$(<"$debian_version_file")
+    local debian_version
+    debian_version=$(echo "$debian_version_raw" | sed -n 's/^\([0-9]\+\).*/\1/p')
+    if ! [[ "$debian_version" =~ ^[0-9]+$ ]] || [ "$debian_version" -lt 12 ]; then
+        echo " Error: This script requires an environment running Debian version 12 or"
+        echo "   higher. Detected version: $debian_version_raw (parsed as $debian_version)."
+        echo ""
+        echo " This error is based on information read from the $debian_version_file file."
+        exit 1
+    fi
 }
 
 check_deps() {
-    echo "I'm a placeholder for a script dependencies check."
-    read -p "Press [Enter] to continue..."
+    local missing_deps=()
+    for dep in curl wget gpg jq; do
+        if ! command -v "$dep" &> /dev/null; then
+            missing_deps+=("$dep")
+        fi
+    done
+    if [ ${#missing_deps[@]} -ne 0 ]; then
+        echo ""
+        echo " Info: The following utilities are required and will now be installed: ${missing_deps[*]}"
+        echo ""
+        sleep 1
+        if ! { $USE_SUDO apt update && $USE_SUDO apt install -y "${missing_deps[@]}"; }; then
+            echo " Error: Failed to install required utilities: ${missing_deps[*]}"
+            exit 1
+        fi
+    fi
 }
 
 check_gum() {
@@ -57,16 +110,16 @@ menu_main() {
 
         case $MENU_CHOICE in
             "Initial Setup for a new installation")
-                sidekick_setup
+                sidekick_setup_interactive
                 ;;
             "Configure common security options")
-                sidekick_secure
+                sidekick_secure_interactive
                 ;;
             "Install shell prompt upgrades")
-                sidekick_prompt
+                sidekick_prompt_interactive
                 ;;
             "Upgrade from Bookworm to Trixie")
-                sidekick_upgrade
+                sidekick_upgrade_interactive
                 ;;
             "Update installed packages")
                 sidekick_update_interactive
@@ -83,22 +136,27 @@ menu_main() {
 }
 
 
-sidekick_setup() {
-    echo "I'm a placeholder for the initial setup script."
+sidekick_setup_interactive() {
+    echo "I'm a placeholder for the initial interactive setup script."
     read -p "Press [Enter] to continue..."
 }
 
-sidekick_secure() {
+sidekick_setup_automatic() {
+    echo "I'm a placeholder for the initial automatic setup script."
+    read -p "Press [Enter] to continue..."
+}
+
+sidekick_secure_interactive() {
     echo "I'm a placeholder for the security script."
     read -p "Press [Enter] to continue..."
 }
 
-sidekick_prompt() {
+sidekick_prompt_interactive() {
     echo "I'm a placeholder for the local starship prompt config."
     read -p "Press [Enter] to continue..."
 }
 
-sidekick_upgrade() {
+sidekick_upgrade_interactive() {
     echo "I'm a placeholder for the version upgrade script."
     read -p "Press [Enter] to continue..."
 }
@@ -131,7 +189,7 @@ run_setup() {
     check_deps
     check_gum
     check_fetch
-    sidekick_setup
+    sidekick_setup_automatic
 }
 
 run_secure() {
@@ -141,7 +199,7 @@ run_secure() {
     check_deps
     check_gum
     check_fetch
-    sidekick_secure
+    sidekick_secure_interactive
 }
 
 run_prompt() {
@@ -151,7 +209,7 @@ run_prompt() {
     check_deps
     check_gum
     check_fetch
-    sidekick_prompt
+    sidekick_prompt_interactive
 }
 
 run_upgrade() {
@@ -161,7 +219,7 @@ run_upgrade() {
     check_deps
     check_gum
     check_fetch
-    sidekick_upgrade
+    sidekick_upgrade_interactive
 }
 
 run_update() {
