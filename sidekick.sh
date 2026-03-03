@@ -46,27 +46,31 @@ check_fetch() {
 menu_main() {
     local MENU_CHOICE
     MENU_CHOICE=$(gum choose \
-        "Initial Setup for a new Debian installation" \
-        "Assist in upgrading from Debian 12 to Debian 13" \
-        "Configure security options for this environment" \
-        "Install useful shell prompt upgrades" \
-        "Update installed packages")
+        "Initial Setup for a new installation" \
+        "Upgrade from version 12 to version 13" \
+        "Configure common security options" \
+        "Install shell prompt upgrades" \
+        "Update installed packages" \
+        "Close this script")
 
     case $MENU_CHOICE in
-        "Initial Setup for a new Debian installation")
+        "Initial Setup for a new installation")
             sidekick_setup
             ;;
-        "Assist in upgrading from Debian 12 to Debian 13")
+        "Upgrade from version 12 to version 13")
             sidekick_upgrade
             ;;
-        "Configure security options for this environment")
+        "Configure common security options")
             sidekick_secure
             ;;
-        "Install useful shell prompt upgrades")
+        "Install shell prompt upgrades")
             sidekick_prompt
             ;;
         "Update installed packages")
             sidekick_update
+            ;;
+        "Close this script")
+            exit 0
             ;;
         "")
             gum style --foreground 57 --padding "1 1" "Nothing selected..."
@@ -112,3 +116,4 @@ check_deps
 check_gum
 check_fetch
 menu_main
+exit 0
