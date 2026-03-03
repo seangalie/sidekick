@@ -44,38 +44,35 @@ check_fetch() {
 }
 
 menu_main() {
-    gum style --foreground 57 --padding "1 1" "Choose security practices or actions to implement:"
-    readarray -t ENV_OPTIONS < <(gum choose --no-limit \
+    local MENU_CHOICE
+    MENU_CHOICE=$(gum choose \
         "Initial Setup for a new Debian installation" \
         "Assist in upgrading from Debian 12 to Debian 13" \
         "Configure security options for this environment" \
         "Install useful shell prompt upgrades" \
         "Update installed packages")
-    for OPTION in "${ENV_OPTIONS[@]}"; do
-        case $OPTION in
-            "Initial Setup for a new Debian installation")
-                sidekick_setup
-                ;;
-            "Assist in upgrading from Debian 12 to Debian 13")
-                sidekick_upgrade
-                ;;
-            "Configure security options for this environment")
-                sidekick_secure
-                ;;
-            "Install useful shell prompt upgrades")
-                sidekick_prompt
-                ;;
-            "Update installed packages")
-                sidekick_update
-                ;;
 
-            *)
-                gum style --foreground 57 --padding "1 1" "Nothing selected..."
-                sleep 1
-                ;;
-        esac
-    done
-
+    case $MENU_CHOICE in
+        "Initial Setup for a new Debian installation")
+            sidekick_setup
+            ;;
+        "Assist in upgrading from Debian 12 to Debian 13")
+            sidekick_upgrade
+            ;;
+        "Configure security options for this environment")
+            sidekick_secure
+            ;;
+        "Install useful shell prompt upgrades")
+            sidekick_prompt
+            ;;
+        "Update installed packages")
+            sidekick_update
+            ;;
+        "")
+            gum style --foreground 57 --padding "1 1" "Nothing selected..."
+            sleep 1
+            ;;
+    esac
 }
 
 sidekick_setup() {
