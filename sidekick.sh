@@ -45,56 +45,161 @@ check_sudo() {
 }
 
 check_version() {
-    local debian_version_file="/etc/debian_version"
-
-    if [ ! -f "$debian_version_file" ]; then
+    local DEBIAN_VERSION_FILE="/etc/debian_version"
+    if [ ! -f "$DEBIAN_VERSION_FILE" ]; then
         echo " Error: This script is designed to run within Debian-based environments. Your"
         echo "   environment appears to be missing information needed to validate that this"
         echo "   environment is compatible with this script."
         echo ""
-        echo " This error is based on information read from the $debian_version_file file."
+        echo " This error is based on information read from the $DEBIAN_VERSION_FILE file."
         exit 1
     fi
-    local debian_version_raw
-    debian_version_raw=$(<"$debian_version_file")
-    local debian_version
-    debian_version=$(echo "$debian_version_raw" | sed -n 's/^\([0-9]\+\).*/\1/p')
-    if ! [[ "$debian_version" =~ ^[0-9]+$ ]] || [ "$debian_version" -lt 12 ]; then
+    local DEBIAN_VERSION_RAW
+    DEBIAN_VERSION_RAW=$(<"$DEBIAN_VERSION_FILE")
+    local DEBIAN_VERSION
+    DEBIAN_VERSION=$(echo "$DEBIAN_VERSION_RAW" | sed -n 's/^\([0-9]\+\).*/\1/p')
+    if ! [[ "$DEBIAN_VERSION" =~ ^[0-9]+$ ]] || [ "$DEBIAN_VERSION" -lt 12 ]; then
         echo " Error: This script requires an environment running Debian version 12 or"
-        echo "   higher. Detected version: $debian_version_raw (parsed as $debian_version)."
+        echo "   higher. Detected version: $DEBIAN_VERSION_RAW (parsed as $DEBIAN_VERSION)."
         echo ""
-        echo " This error is based on information read from the $debian_version_file file."
+        echo " This error is based on information read from the $DEBIAN_VERSION_FILE file."
         exit 1
     fi
 }
 
 check_deps() {
-    local missing_deps=()
-    for dep in curl wget gpg jq; do
-        if ! command -v "$dep" &> /dev/null; then
-            missing_deps+=("$dep")
+    local SUDO_CMD="${USE_SUDO:-}"
+    local MISSING_DEPS=()
+    for DEP in curl wget gpg jq; do
+        if ! command -v "$DEP" &> /dev/null; then
+            MISSING_DEPS+=("$DEP")
         fi
     done
-    if [ ${#missing_deps[@]} -ne 0 ]; then
+    if [ ${#MISSING_DEPS[@]} -ne 0 ]; then
         echo ""
-        echo " Info: The following utilities are required and will now be installed: ${missing_deps[*]}"
+        echo " Info: The following utilities are required and will now be installed: ${MISSING_DEPS[*]}"
         echo ""
         sleep 1
-        if ! { $USE_SUDO apt update && $USE_SUDO apt install -y "${missing_deps[@]}"; }; then
-            echo " Error: Failed to install required utilities: ${missing_deps[*]}"
+        export DEBIAN_FRONTEND=noninteractive
+        if ! { $SUDO_CMD apt-get update && $SUDO_CMD apt-get install -y "${MISSING_DEPS[@]}"; }; then
+            echo " Error: Failed to install required utilities: ${MISSING_DEPS[*]}"
             exit 1
         fi
+        for DEP in "${MISSING_DEPS[@]}"; do
+            if ! command -v "$DEP" &> /dev/null; then
+                echo " Error: Utility '$DEP' was installed but is not available in PATH."
+                exit 1
+            fi
+        done
     fi
 }
 
 check_gum() {
-    echo "I'm a placeholder for a check that gum is installed, and to install it if it isn't."
-    read -p "Press [Enter] to continue..."
+    if command -v gum &> /dev/null; then
+        return 0
+    fi
+    echo ""
+    echo " Info: gum from Charm is used by this script and will now be installed..."
+    echo ""
+    sleep 1
+    local SUDO_CMD="${USE_SUDO:-}"
+    export DEBIAN_FRONTEND=noninteractive
+    $SUDO_CMD mkdir -p /etc/apt/keyrings
+    if ! curl -fsSL https://repo.charm.sh/apt/gpg.key | $SUDO_CMD gpg --dearmor -o /etc/apt/keyrings/charm.gpg 2>/dev/null; then
+        echo " Error: Failed to download or import GPG key."
+        exit 1
+    fi
+    echo "deb [signed-by=/etc/apt/keyrings/charm.gpg] https://repo.charm.sh/apt/ * *" | $SUDO_CMD tee /etc/apt/sources.list.d/charm.list >/dev/null
+    if ! $SUDO_CMD apt-get update && $SUDO_CMD apt-get install -y gum; then
+        echo " Error: Failed to install gum."
+        exit 1
+    fi
+    if ! command -v gum &> /dev/null; then
+        echo " Error: gum was installed but is not available in PATH."
+        exit 1
+    fi
 }
 
 check_fetch() {
-    echo "I'm a placeholder for a check that the fetch utility is installed, and to install it if it isn't."
-    read -p "Press [Enter] to continue..."
+    local SUDO_CMD="${USE_SUDO:-}"
+    export DEBIAN_FRONTEND=noninteractive
+    if command -v neofetch >&2; then
+        echo " Removing deprecated neofetch package..."
+        sleep 1
+        if ! $SUDO_CMD apt-get purge -y neofetch 2>/dev/null; then
+            echo " Warning: Could not purge neofetch. Trying remove..."
+            $SUDO_CMD apt-get remove -y neofetch 2>/dev/null || true
+        fi
+        echo " The neofetch package has been removed."
+    fi
+    local FASTFETCH_NEW_VERSION
+    if command -v jq &> /dev/null; then
+        FASTFETCH_NEW_VERSION=$(curl -s https://api.github.com/repos/fastfetch-cli/fastfetch/releases/latest | jq -r '.tag_name')
+    else
+        FASTFETCH_NEW_VERSION=$(curl -s https://api.github.com/repos/fastfetch-cli/fastfetch/releases/latest | grep -o '"tag_name"' | sed 's/.*"tag_name": "\([^"]*\)".*/\1/')
+    fi
+    if [ -z "$FASTFETCH_NEW_VERSION" ]; then
+        echo " Error: Could not retrieve fastfetch version from GitHub API."
+        exit 1
+    fi
+    local FASTFETCH_INSTALLED_VERSION
+    if command -v fastfetch &> /dev/null; then
+        FASTFETCH_INSTALLED_VERSION=$(fastfetch --version 2>/dev/null | sed -n 's/fastfetch \([^ ]*\).*/\1/p' || echo "unknown")
+        if [ "$FASTFETCH_INSTALLED_VERSION" = "$FASTFETCH_NEW_VERSION" ]; then
+            echo " Info: fastfetch $FASTFETCH_NEW_VERSION is already installed."
+            return 0
+        fi
+        echo " Uninstalling existing fastfetch version $FASTFETCH_INSTALLED_VERSION..."
+        if ! $SUDO_CMD apt-get remove -y fastfetch 2>/dev/null; then
+            if ! $SUDO_CMD dpkg -r fastfetch 2>/dev/null; then
+                echo " Warning: Could not uninstall existing fastfetch $FASTFETCH_INSTALLED_VERSION."
+            fi
+        fi
+        if command -v fastfetch &> /dev/null; then
+            echo " Error: fastfetch $FASTFETCH_INSTALLED_VERSION still detected after uninstall."
+            exit 1
+        fi
+    fi
+    if ! command -v fastfetch &> /dev/null; then
+        local ARCH
+        ARCH=$(uname -m)
+        case $ARCH in
+            x86_64) ARCH="amd64" ;;
+            aarch64) ARCH="aarch64" ;;
+            armv7l) ARCH="armv7l" ;;
+            armv6l) ARCH="armv6l" ;;
+            ppc64le) ARCH="ppc64le" ;;
+            riscv64) ARCH="riscv64" ;;
+            s390x) ARCH="s390x" ;;
+            *) echo " Error: Unsupported architecture: $ARCH"; exit 1 ;;
+        esac
+        local FASTFETCH_DEB="fastfetch-linux-${ARCH}.deb"
+        local FASTFETCH_URL="https://github.com/fastfetch-cli/fastfetch/releases/download/${FASTFETCH_NEW_VERSION}/${FASTFETCH_DEB}"
+        local FASTFETCH_DEB_TEMP
+        FASTFETCH_DEB_TEMP=$(mktemp /tmp/fastfetch-XXXXXX.deb)
+        echo " Downloading fastfetch $FASTFETCH_NEW_VERSION..."
+        if ! curl -fsSL "$FASTFETCH_URL" -o "$FASTFETCH_DEB_TEMP"; then
+            echo " Error: Failed to download fastfetch from $FASTFETCH_URL"
+            rm -f "$FASTFETCH_DEB_TEMP"
+            exit 1
+        fi
+        echo " Installing fastfetch..."
+        if ! $SUDO_CMD dpkg -i "$FASTFETCH_DEB_TEMP"; then
+            echo " Error: Failed to install fastfetch via dpkg."
+            rm -f "$FASTFETCH_DEB_TEMP"
+            if ! $SUDO_CMD apt-get install -y "$FASTFETCH_DEB_TEMP" 2>/dev/null; then
+                echo " Error: Could not install fastfetch."
+                rm -f "$FASTFETCH_DEB_TEMP"
+                exit 1
+            fi
+        fi
+        rm -f "$FASTFETCH_DEB_TEMP"
+        if ! command -v fastfetch &> /dev/null; then
+            echo " Error: fastfetch was installed but is not available in PATH."
+            exit 1
+        fi
+        echo " Info: fastfetch $FASTFETCH_NEW_VERSION has been installed."
+    fi
 }
 
 menu_main() {
