@@ -1,6 +1,10 @@
 # Sidekick
 
-A configuration script and server management tool for Debian instances.
+A configuration and update tool for a Debian headless environment
+
+This script is designed to help configure and update Debian 12 (Bookworm)
+and Debian 13 (Trixie) headless instances such as remote servers, home lab
+images, container environments, and virtual machines.
 
 ## License
 
