@@ -27,7 +27,7 @@ check_connection() {
     }
 }
 
-#
+# Check for superuser permissions or root-level shell access
 
 check_sudo() {
     if ! command -v sudo &> /dev/null; then
@@ -49,6 +49,8 @@ check_sudo() {
     fi
     export USE_SUDO
 }
+
+# Check that Debian is the current environment, and we're on Bookworm (12.x) or Trixie (13.x)
 
 check_version() {
     local DEBIAN_VERSION_FILE="/etc/debian_version"
@@ -72,6 +74,8 @@ check_version() {
         exit 1
     fi
 }
+
+# Check for dependencies used within this script (and install them if needed)
 
 check_deps() {
     local SUDO_CMD="${USE_SUDO:-}"
@@ -102,6 +106,8 @@ check_deps() {
     fi
 }
 
+# Check for gum, and install the Charm repo and gum if not present
+
 check_gum() {
     if command -v gum &> /dev/null; then
         return 0
@@ -127,6 +133,8 @@ check_gum() {
         exit 1
     fi
 }
+
+# Check for the updated fastfetch used in this script, and remove older neofetch if it's installed
 
 check_fetch() {
     local SUDO_CMD="${USE_SUDO:-}"
@@ -210,6 +218,8 @@ check_fetch() {
     fi
 }
 
+# A simple package update function
+
 apt_update_simple() {
     local SUDO_CMD="${USE_SUDO:-}"
     export DEBIAN_FRONTEND=noninteractive
@@ -232,6 +242,8 @@ apt_update_simple() {
     fi
     gum style --foreground 212 --padding "1 1" "Installed packages have been updated."
 }
+
+# A comprehensive package update function
 
 apt_update_full() {
     local SUDO_CMD="${USE_SUDO:-}"
@@ -270,6 +282,24 @@ apt_update_full() {
     $SUDO_CMD apt-get clean
     gum style --foreground 212 --padding "1 1" "Packages have been updated and cleanup complete."
 }
+
+# Setup the environment locale and timezone
+
+setup_localetime() {
+    local SUDO_CMD="${USE_SUDO:-}"
+    export DEBIAN_FRONTEND=noninteractive
+    if gum confirm "Do you want to set the locale and timezone for this environment?"; then
+        gum style --foreground 57 --padding "1 1" "Running Configuration Utility to set Environment Locale..."
+        sleep 1
+        $SUDO_CMD dpkg-reconfigure locales
+        gum style --foreground 57 --padding "1 1" "Running Configuration Utility to set Environment Timezone..."
+        sleep 1
+        $SUDO_CMD dpkg-reconfigure tzdata
+        gum style --foreground 212 --padding "1 1" "Environment Locale and Timezone have been set and updated."
+    fi
+}
+
+# Setup the base packages recommended for headless Debian environments
 
 setup_pkgs_base() {
     local SUDO_CMD="${USE_SUDO:-}"
@@ -314,6 +344,8 @@ setup_pkgs_base() {
     fi
 }
 
+# Setup the base packages and core optional packages recommended for headless Debian environments automatically
+
 setup_pkgs_automatic() {
     local SUDO_CMD="${USE_SUDO:-}"
     export DEBIAN_FRONTEND=noninteractive
@@ -355,8 +387,63 @@ setup_pkgs_automatic() {
         fi
         gum style --foreground 212 --padding "1 1" "Common packages specific to Debian 13 have been installed."
     fi
-    # ADD MORE
+    gum style --foreground 57 --padding "1 1" "Installing starship prompt enhancements..."
+    sleep 1
+    if command -v starship &> /dev/null; then
+        echo " Info: Starship is already installed."
+    else
+        if ! curl -sS https://starship.rs/install.sh | sh -s -- -y; then
+            echo " Error: Failed to install starship."
+        fi
+    fi
+    if command -v starship &> /dev/null; then
+        if [ -f "$HOME/.bashrc" ]; then
+            if ! grep -q 'starship init bash' "$HOME/.bashrc"; then
+                echo 'eval "$(starship init bash)"' >> "$HOME/.bashrc"
+            fi
+        else
+            echo 'eval "$(starship init bash)"' >> "$HOME/.bashrc"
+        fi
+        if [ ! -d "$HOME/.config" ]; then
+            mkdir -p "$HOME/.config"
+        fi
+        if [ ! -f "$HOME/.config/starship.toml" ]; then
+            touch "$HOME/.config/starship.toml"
+            if command -v starship &> /dev/null; then
+                starship preset plain-text-symbols -o "$HOME/.config/starship.toml" 2>/dev/null || true
+            fi
+        fi
+        if command -v fastfetch &> /dev/null; then
+            local FASTFETCH_BLOCK='uptime; echo ""; fastfetch; echo ""; df -h'
+            if [ -f "$HOME/.bashrc" ] && ! grep -Fxq "$FASTFETCH_BLOCK" "$HOME/.bashrc"; then
+                echo "$FASTFETCH_BLOCK" >> "$HOME/.bashrc"
+            fi
+        fi
+        gum style --foreground 212 --padding "1 1" "Starship prompt enhancements have been installed."
+    else
+        echo " Error: Starship installation verification failed."
+    fi
+    gum style --foreground 57 --padding "1 1" "Installing system information utilities..."
+    sleep 1
+    if ! $SUDO_CMD apt-get install -y hwinfo sysstat; then
+        echo " Error: Failed to install system information utilities."
+    else
+        gum style --foreground 212 --padding "1 1" "System information utilties have been installed."
+    fi
+    gum style --foreground 57 --padding "1 1" "Installing tmux from Debian package repositories..."
+    sleep 1
+    if ! $SUDO_CMD apt-get install -y tmux; then
+        echo " Error: Failed to install tmux."
+    else
+        if command -v tmux &> /dev/null; then
+            gum style --foreground 212 --padding "1 1" "Tmux has been installed."
+        else
+            echo " Warning: tmux installed but command not found."
+        fi
+    fi
 }
+
+# Setup the optional packages for headless Debian environments interactively
 
 setup_pkgs_option() {
     local SUDO_CMD="${USE_SUDO:-}"
@@ -625,6 +712,45 @@ setup_pkgs_option() {
     done
 }
 
+# Setup SSH and basic options for a secure SSH instance
+
+setup_ssh() {
+    local SUDO_CMD="${USE_SUDO:-}"
+    export DEBIAN_FRONTEND=noninteractive
+    gum style --foreground 57 --padding "1 1" "Configuring SSH..."
+    if [ ! -f /etc/ssh/sshd_config.bak ]; then
+        $SUDO_CMD cp /etc/ssh/sshd_config /etc/ssh/sshd_config.bak
+    fi
+    if gum confirm "Do you want to change the default SSH port? (default is 22)"; then
+        SSH_PORT=$(gum input --placeholder "Enter new SSH port")
+        if [[ "$SSH_PORT" =~ ^[0-9]+$ ]] && [ "$SSH_PORT" -ge 1 ] && [ "$SSH_PORT" -le 65535 ]; then
+            if grep -qE '^#?Port ' /etc/ssh/sshd_config; then
+                $SUDO_CMD sed -i "s/^#*Port .*/Port $SSH_PORT/" /etc/ssh/sshd_config
+            else
+                echo "Port $SSH_PORT" | $SUDO_CMD tee -a /etc/ssh/sshd_config > /dev/null
+            fi
+        else
+            gum style --foreground 196 --padding "1 1" "Invalid port number. Skipping port change."
+        fi
+    fi
+    if gum confirm "Do you want to disable root login via SSH?"; then
+        if grep -qE '^#?PermitRootLogin ' /etc/ssh/sshd_config; then
+            $SUDO_CMD sed -i "s/^#*PermitRootLogin .*/PermitRootLogin no/" /etc/ssh/sshd_config
+        else
+            echo "PermitRootLogin no" | $SUDO_CMD tee -a /etc/ssh/sshd_config > /dev/null
+        fi
+    fi
+    if gum confirm "Do you want to disable password authentication for SSH?"; then
+        if grep -qE '^#?PasswordAuthentication ' /etc/ssh/sshd_config; then
+            $SUDO_CMD sed -i "s/^#*PasswordAuthentication .*/PasswordAuthentication no/" /etc/ssh/sshd_config
+        else
+            echo "PasswordAuthentication no" | $SUDO_CMD tee -a /etc/ssh/sshd_config > /dev/null
+        fi
+    fi
+    $SUDO_CMD systemctl restart sshd
+    gum style --foreground 212 --padding "1 1" "SSH configuration completed."
+}
+
 menu_main() {
     gum style --foreground 212 --padding "1 1" "Sidekick - A configuration and update tool for a Debian headless environment"
     while true; do
@@ -665,18 +791,19 @@ menu_main() {
 }
 
 # +---------------------------------------------------------------------------+
-# |     Common Functions for the different configuration and update tools.    |
-# |
+# |         Scripting for the various interactive and automatic modes.        |
 # +---------------------------------------------------------------------------+
 
 sidekick_setup_interactive() {
-    echo "I'm a placeholder for the initial interactive setup script."
-    read -p "Press [Enter] to continue..."
+    apt_update_simple
+    setup_localetime
+    setup_pkgs_base
+    setup_pkgs_option
 }
 
 sidekick_setup_automatic() {
-    echo "I'm a placeholder for the initial automatic setup script."
-    read -p "Press [Enter] to continue..."
+    apt_update_simple
+    setup_pkgs_automatic
 }
 
 sidekick_secure_interactive() {
@@ -704,76 +831,57 @@ sidekick_update_automatic() {
     read -p "Press [Enter] to continue..."
 }
 
-
 # +---------------------------------------------------------------------------+
-# |     Common Functions for the different configuration and update tools.    |
-# |
+# |   Logic for the command line flags that invoke the various script modes.  |
 # +---------------------------------------------------------------------------+
 
-run_menu() {
+run_common() {
     check_connection
     check_sudo
     check_version
     check_deps
     check_gum
     check_fetch
+}
+
+run_menu() {
+    run_common
     menu_main
     exit 0
 }
 
 run_setup() {
-    check_connection
-    check_sudo
-    check_version
-    check_deps
-    check_gum
-    check_fetch
+    run_common
     sidekick_setup_automatic
+    exit 0
 }
 
 run_secure() {
-    check_connection
-    check_sudo
-    check_version
-    check_deps
-    check_gum
-    check_fetch
+    run_common
     sidekick_secure_interactive
+    exit 0
 }
 
 run_prompt() {
-    check_connection
-    check_sudo
-    check_version
-    check_deps
-    check_gum
-    check_fetch
+    run_common
     sidekick_prompt_interactive
+    exit 0
 }
 
 run_upgrade() {
-    check_connection
-    check_sudo
-    check_version
-    check_deps
-    check_gum
-    check_fetch
+    run_common
     sidekick_upgrade_interactive
+    exit 0
 }
 
 run_update() {
-    check_connection
-    check_sudo
-    check_version
-    check_deps
-    check_gum
-    check_fetch
+    run_common
     sidekick_update_automatic
+    exit 0
 }
 
 # +---------------------------------------------------------------------------+
-# |     Common Functions for the different configuration and update tools.    |
-# |
+# |                    Shell prompt and command line flags.                   |
 # +---------------------------------------------------------------------------+
 
 if [ $# -eq 0 ]; then
