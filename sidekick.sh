@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 #
-# +---------------------------------------------------------------------------+
+# /===========================================================================\
 # |                                 Sidekick                                  |
 # |     A configuration and update tool for a Debian headless environment     |
-# +---------------------------------------------------------------------------+
+# \===========================================================================/
 #
 # This script is designed to help configure and update Debian 12 (Bookworm)
 # and Debian 13 (Trixie) headless instances such as remote servers, home lab
@@ -14,12 +14,20 @@
 
 set -euo pipefail
 
+# +---------------------------------------------------------------------------+
+# |     Common Functions for the different configuration and update tools.    |
+# +---------------------------------------------------------------------------+
+
+# Ping Google to check for Internet Connectivity
+
 check_connection() {
     ping -c 1 8.8.8.8 &> /dev/null || {
         echo " Error: No internet connection detected.";
         exit 1;
     }
 }
+
+#
 
 check_sudo() {
     if ! command -v sudo &> /dev/null; then
@@ -123,7 +131,7 @@ check_gum() {
 check_fetch() {
     local SUDO_CMD="${USE_SUDO:-}"
     export DEBIAN_FRONTEND=noninteractive
-    if command -v neofetch >&2; then
+    if command -v neofetch &> /dev/null; then
         echo " Info: Removing deprecated neofetch package..."
         sleep 1
         if ! $SUDO_CMD apt-get purge -y neofetch 2>/dev/null; then
@@ -225,20 +233,42 @@ apt_update_simple() {
     gum style --foreground 212 --padding "1 1" "Installed packages have been updated."
 }
 
-apt_fullupdate() {
+apt_update_full() {
     local SUDO_CMD="${USE_SUDO:-}"
     export DEBIAN_FRONTEND=noninteractive
     gum style --foreground 57 --padding "1 1" "Running a full apt upgrade and package cleanup..."
     sleep 1
-    $USE_SUDO apt update
-    $USE_SUDO apt install --fix-missing
-    $USE_SUDO apt upgrade --allow-downgrades
-    $USE_SUDO apt full-upgrade --allow-downgrades -V
-    $USE_SUDO apt install -f
-    $USE_SUDO apt autoremove --purge
-    $USE_SUDO apt autoclean
-    $USE_SUDO apt clean
-    gum style --foreground 212 --padding "1 1" "Packages have been updated and cleanup tools have completed."
+    echo " Updating package lists..."
+    if ! $SUDO_CMD apt-get update; then
+        echo " Error: Failed to update package lists."
+        exit 1
+    fi
+    echo " Fixing missing dependencies..."
+    if ! $SUDO_CMD apt-get install -y --fix-missing; then
+        echo " Warning: Failed to fix missing dependencies."
+    fi
+    echo " Upgrading packages..."
+    if ! $SUDO_CMD apt-get upgrade -y --allow-downgrades; then
+        echo " Error: Failed to upgrade packages."
+        exit 1
+    fi
+    echo " Running full upgrade..."
+    if ! $SUDO_CMD apt-get full-upgrade -y --allow-downgrades; then
+        echo " Error: Failed to run full-upgrade."
+        exit 1
+    fi
+    echo " Fixing broken packages..."
+    if ! $SUDO_CMD apt-get install -y -f; then
+        echo " Warning: Failed to fix broken packages."
+    fi
+    echo " Removing unnecessary packages..."
+    if ! $SUDO_CMD apt-get autoremove -y --purge; then
+        echo " Warning: Failed to autoremove packages."
+    fi
+    echo " Cleaning up..."
+    $SUDO_CMD apt-get autoclean
+    $SUDO_CMD apt-get clean
+    gum style --foreground 212 --padding "1 1" "Packages have been updated and cleanup complete."
 }
 
 setup_pkgs_base() {
@@ -246,12 +276,12 @@ setup_pkgs_base() {
     export DEBIAN_FRONTEND=noninteractive
     local DEBIAN_VERSION_NUM="${DEBIAN_VERSION:-}"
     if [ -z "$DEBIAN_VERSION_NUM" ]; then
-        DEBIAN_VERSION_NUM=$(< /etc/debian_version | sed -n 's/^\([0-9]\+\).*/\1/p')
+        DEBIAN_VERSION_NUM=$(sed -n 's/^\([0-9]\+\).*/\1/p' /etc/debian_version)
     fi
     gum style --foreground 57 --padding "1 1" "Installing common packages for development servers..."
     sleep 1
     local PKGS_BASE="apt-transport-https btop build-essential bwm-ng ca-certificates cmake cmatrix debian-goodies duf git glances htop iotop locate iftop jq make multitail nano needrestart net-tools p7zip p7zip-full tar tldr-py tree unzip vnstat"
-    if ! $SUDO_CMD apt-get install -y $PKGS_BASE; then
+    if ! $SUDO_CMD apt-get install -y "$PKGS_BASE"; then
         echo " Error: Failed to install base packages."
         exit 1
     fi
@@ -284,12 +314,56 @@ setup_pkgs_base() {
     fi
 }
 
+setup_pkgs_automatic() {
+    local SUDO_CMD="${USE_SUDO:-}"
+    export DEBIAN_FRONTEND=noninteractive
+    local DEBIAN_VERSION_NUM="${DEBIAN_VERSION:-}"
+    if [ -z "$DEBIAN_VERSION_NUM" ]; then
+        DEBIAN_VERSION_NUM=$(sed -n 's/^\([0-9]\+\).*/\1/p' /etc/debian_version)
+    fi
+    gum style --foreground 57 --padding "1 1" "Installing common packages for development servers..."
+    sleep 1
+    local PKGS_BASE="apt-transport-https btop build-essential bwm-ng ca-certificates cmake cmatrix debian-goodies duf git glances htop iotop locate iftop jq make multitail nano needrestart net-tools p7zip p7zip-full tar tldr-py tree unzip vnstat"
+    if ! $SUDO_CMD apt-get install -y "$PKGS_BASE"; then
+        echo " Error: Failed to install base packages."
+        exit 1
+    fi
+    gum style --foreground 212 --padding "1 1" "Common packages for development servers have been installed."
+    if [ "$DEBIAN_VERSION_NUM" -lt 13 ] 2>/dev/null; then
+        gum style --foreground 57 --padding "1 1" "Installing common packages specific to Debian 12..."
+        sleep 1
+        echo 'deb [signed-by=/usr/share/keyrings/azlux.gpg] https://packages.azlux.fr/debian/ bookworm main' | $SUDO_CMD tee /etc/apt/sources.list.d/azlux.list >/dev/null
+        if ! curl -fsSL https://azlux.fr/repo.gpg.key 2>/dev/null | gpg --dearmor 2>/dev/null | $SUDO_CMD tee /usr/share/keyrings/azlux.gpg >/dev/null; then
+            echo " Warning: Failed to download or import GPG key for azlux repository."
+        else
+            if ! $SUDO_CMD apt-get update -y 2>/dev/null; then
+                echo " Warning: Failed to update package lists after adding azlux repository."
+            else
+                if ! $SUDO_CMD apt-get install -y software-properties-common gping 2>/dev/null; then
+                    echo " Warning: Failed to install software-properties-common or gping."
+                fi
+            fi
+        fi
+        gum style --foreground 212 --padding "1 1" "Common packages specific to Debian 12 have been installed."
+    fi
+    if [ "$DEBIAN_VERSION_NUM" -ge 13 ] 2>/dev/null; then
+        gum style --foreground 57 --padding "1 1" "Installing common packages specific to Debian 13..."
+        sleep 1
+
+        if ! $SUDO_CMD apt-get install -y gping; then
+            echo " Warning: Failed to install gping."
+        fi
+        gum style --foreground 212 --padding "1 1" "Common packages specific to Debian 13 have been installed."
+    fi
+    # ADD MORE
+}
+
 setup_pkgs_option() {
     local SUDO_CMD="${USE_SUDO:-}"
     export DEBIAN_FRONTEND=noninteractive
     gum style --foreground 212 --padding "1 1" "Choose which package groups to configure:"
     local -a PKG_OPTIONS=()
-    while IFS= read -r option; do
+    while IFS= read -r PKG_OPTION; do
         PKG_OPTIONS+=("$PKG_OPTION")
     done < <(gum choose --no-limit \
         "Node.js Support and Package Management" \
@@ -306,7 +380,7 @@ setup_pkgs_option() {
             "Node.js Support and Package Management")
                 gum style --foreground 57 --padding "1 1" "Installing node.js support and npm from Debian package repositories..."
                 sleep 1
-                if ! $SUDO_CMD apt install -y nodejs npm; then
+                if ! $SUDO_CMD apt-get install -y nodejs npm; then
                     echo " Warning: Failed to install nodejs and npm."
                 else
                     gum style --foreground 212 --padding "1 1" "Node.js support and npm have been installed."
@@ -315,8 +389,8 @@ setup_pkgs_option() {
             "Python Programming Language Support")
                 gum style --foreground 57 --padding "1 1" "Installing python support from Debian package repositories..."
                 sleep 1
-                if ! $SUDO_CMD apt install -y python3 python3-pip python3-dev python3-venv build-essential; then
-                    echo " Warning: Failed to install nodejs and npm."
+                if ! $SUDO_CMD apt-get install -y python3 python3-pip python3-dev python3-venv build-essential; then
+                    echo " Warning: Failed to install python3 and supporting packages."
                 else
                     gum style --foreground 212 --padding "1 1" "Python support has been installed."
                 fi
@@ -363,7 +437,6 @@ setup_pkgs_option() {
                             echo "$FASTFETCH_BLOCK" >> "$HOME/.bashrc"
                         fi
                     fi
-
                     gum style --foreground 212 --padding "1 1" "Starship prompt enhancements have been installed."
                 else
                     echo " Error: Starship installation verification failed."
@@ -433,7 +506,7 @@ setup_pkgs_option() {
                 fi
                 gum style --foreground 212 --padding "1 1" "Choose which coding agents to install:"
                 local -a AGENT_OPTIONS=()
-                while IFS= read -r option; do
+                while IFS= read -r AGENT_OPTION; do
                     AGENT_OPTIONS+=("$AGENT_OPTION")
                 done < <(gum choose --no-limit \
                     "Claude Code" \
@@ -442,8 +515,8 @@ setup_pkgs_option() {
                     "Opencode from SST" \
                     "Charm Crush" \
                     "Github Copilot CLI")
-                for PKG_OPTION in "${PKG_OPTIONS[@]}"; do
-                    case $PKG_OPTION in
+                    for AGENT_OPTION in "${AGENT_OPTIONS[@]}"; do
+                    case $AGENT_OPTION in
                         "Claude Code")
                             gum style --foreground 57 --padding "1 1" "Installing Claude Code..."
                             if command -v claude &> /dev/null; then
@@ -518,7 +591,7 @@ setup_pkgs_option() {
                                     echo " Error: Failed to install Copilot CLI."
                                 fi
                             fi
-                            if command -v claude &> /dev/null; then
+                            if command -v copilot &> /dev/null; then
                                 gum style --foreground 212 --padding "1 1" "Copilot CLI has been installed."
                             else
                                 echo " Warning: Copilot CLI installation verification failed."
@@ -530,6 +603,7 @@ setup_pkgs_option() {
                             ;;
                     esac
                 done
+                ;;
             "Terminal Multiplexer")
                 gum style --foreground 57 --padding "1 1" "Installing tmux from Debian package repositories..."
                 sleep 1
@@ -590,6 +664,11 @@ menu_main() {
     done
 }
 
+# +---------------------------------------------------------------------------+
+# |     Common Functions for the different configuration and update tools.    |
+# |
+# +---------------------------------------------------------------------------+
+
 sidekick_setup_interactive() {
     echo "I'm a placeholder for the initial interactive setup script."
     read -p "Press [Enter] to continue..."
@@ -625,6 +704,11 @@ sidekick_update_automatic() {
     read -p "Press [Enter] to continue..."
 }
 
+
+# +---------------------------------------------------------------------------+
+# |     Common Functions for the different configuration and update tools.    |
+# |
+# +---------------------------------------------------------------------------+
 
 run_menu() {
     check_connection
@@ -687,6 +771,10 @@ run_update() {
     sidekick_update_automatic
 }
 
+# +---------------------------------------------------------------------------+
+# |     Common Functions for the different configuration and update tools.    |
+# |
+# +---------------------------------------------------------------------------+
 
 if [ $# -eq 0 ]; then
     run_menu
