@@ -37,7 +37,7 @@ check_sudo() {
         fi
         echo " Info: sudo is not installed. Installing now..."
         sleep 1
-        if ! apt update && apt install -y sudo; then
+        if ! apt-get update || ! apt-get install -y sudo; then
             echo " Error: Failed to install sudo."
             exit 1
         fi
@@ -73,6 +73,7 @@ check_version() {
         echo " This error is based on information read from the $DEBIAN_VERSION_FILE file."
         exit 1
     fi
+    export DEBIAN_VERSION
 }
 
 # Check for dependencies used within this script (and install them if needed)
@@ -124,7 +125,7 @@ check_gum() {
         exit 1
     fi
     echo "deb [signed-by=/etc/apt/keyrings/charm.gpg] https://repo.charm.sh/apt/ * *" | $SUDO_CMD tee /etc/apt/sources.list.d/charm.list >/dev/null
-    if ! $SUDO_CMD apt-get update && $SUDO_CMD apt-get install -y gum; then
+    if ! $SUDO_CMD apt-get update || ! $SUDO_CMD apt-get install -y gum; then
         echo " Error: Failed to install gum."
         exit 1
     fi
@@ -152,7 +153,7 @@ check_fetch() {
     if command -v jq &> /dev/null; then
         FASTFETCH_NEW_VERSION=$(curl -s https://api.github.com/repos/fastfetch-cli/fastfetch/releases/latest | jq -r '.tag_name')
     else
-        FASTFETCH_NEW_VERSION=$(curl -s https://api.github.com/repos/fastfetch-cli/fastfetch/releases/latest | grep -o '"tag_name"' | sed 's/.*"tag_name": "\([^"]*\)".*/\1/')
+        FASTFETCH_NEW_VERSION=$(curl -s https://api.github.com/repos/fastfetch-cli/fastfetch/releases/latest | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)
     fi
     if [ -z "$FASTFETCH_NEW_VERSION" ]; then
         echo " Error: Could not retrieve fastfetch version from GitHub API."
@@ -202,7 +203,6 @@ check_fetch() {
         echo " Installing fastfetch..."
         if ! $SUDO_CMD dpkg -i "$FASTFETCH_DEB_TEMP"; then
             echo " Error: Failed to install fastfetch via dpkg."
-            rm -f "$FASTFETCH_DEB_TEMP"
             if ! $SUDO_CMD apt-get install -y "$FASTFETCH_DEB_TEMP" 2>/dev/null; then
                 echo " Error: Could not install fastfetch."
                 rm -f "$FASTFETCH_DEB_TEMP"
@@ -225,7 +225,7 @@ apt_update_simple() {
     export DEBIAN_FRONTEND=noninteractive
     gum style --foreground 57 --padding "1 1" "Updating package lists..."
     sleep 1
-    if ! $SUDO_CMD apt-get update -y; then
+    if ! $SUDO_CMD apt-get update; then
         echo " Error: Failed to update package lists."
         exit 1
     fi
@@ -255,10 +255,6 @@ apt_update_full() {
         echo " Error: Failed to update package lists."
         exit 1
     fi
-    echo " Fixing missing dependencies..."
-    if ! $SUDO_CMD apt-get install -y --fix-missing; then
-        echo " Warning: Failed to fix missing dependencies."
-    fi
     echo " Upgrading packages..."
     if ! $SUDO_CMD apt-get upgrade -y --allow-downgrades; then
         echo " Error: Failed to upgrade packages."
@@ -287,14 +283,21 @@ apt_update_full() {
 
 setup_localetime() {
     local SUDO_CMD="${USE_SUDO:-}"
-    export DEBIAN_FRONTEND=noninteractive
     if gum confirm "Do you want to set the locale and timezone for this environment?"; then
         gum style --foreground 57 --padding "1 1" "Running Configuration Utility to set Environment Locale..."
         sleep 1
-        $SUDO_CMD dpkg-reconfigure locales
+        if [ -n "$SUDO_CMD" ]; then
+            $SUDO_CMD DEBIAN_FRONTEND=readline dpkg-reconfigure locales
+        else
+            DEBIAN_FRONTEND=readline dpkg-reconfigure locales
+        fi
         gum style --foreground 57 --padding "1 1" "Running Configuration Utility to set Environment Timezone..."
         sleep 1
-        $SUDO_CMD dpkg-reconfigure tzdata
+        if [ -n "$SUDO_CMD" ]; then
+            $SUDO_CMD DEBIAN_FRONTEND=readline dpkg-reconfigure tzdata
+        else
+            DEBIAN_FRONTEND=readline dpkg-reconfigure tzdata
+        fi
         gum style --foreground 212 --padding "1 1" "Environment Locale and Timezone have been set and updated."
     fi
 }
@@ -310,8 +313,12 @@ setup_pkgs_base() {
     fi
     gum style --foreground 57 --padding "1 1" "Installing common packages for development servers..."
     sleep 1
-    local PKGS_BASE="apt-transport-https btop build-essential bwm-ng ca-certificates cmake cmatrix debian-goodies duf git glances htop iotop locate iftop jq make multitail nano needrestart net-tools p7zip p7zip-full tar tldr-py tree unzip vnstat"
-    if ! $SUDO_CMD apt-get install -y "$PKGS_BASE"; then
+    local -a PKGS_BASE=(
+        apt-transport-https btop build-essential bwm-ng ca-certificates cmake cmatrix
+        debian-goodies duf git glances htop iotop locate iftop jq make multitail nano
+        needrestart net-tools p7zip p7zip-full tar tldr-py tree unzip vnstat
+    )
+    if ! $SUDO_CMD apt-get install -y "${PKGS_BASE[@]}"; then
         echo " Error: Failed to install base packages."
         exit 1
     fi
@@ -355,8 +362,12 @@ setup_pkgs_automatic() {
     fi
     gum style --foreground 57 --padding "1 1" "Installing common packages for development servers..."
     sleep 1
-    local PKGS_BASE="apt-transport-https btop build-essential bwm-ng ca-certificates cmake cmatrix debian-goodies duf git glances htop iotop locate iftop jq make multitail nano needrestart net-tools p7zip p7zip-full tar tldr-py tree unzip vnstat"
-    if ! $SUDO_CMD apt-get install -y "$PKGS_BASE"; then
+    local -a PKGS_BASE=(
+        apt-transport-https btop build-essential bwm-ng ca-certificates cmake cmatrix
+        debian-goodies duf git glances htop iotop locate iftop jq make multitail nano
+        needrestart net-tools p7zip p7zip-full tar tldr-py tree unzip vnstat
+    )
+    if ! $SUDO_CMD apt-get install -y "${PKGS_BASE[@]}"; then
         echo " Error: Failed to install base packages."
         exit 1
     fi
@@ -399,10 +410,10 @@ setup_pkgs_automatic() {
     if command -v starship &> /dev/null; then
         if [ -f "$HOME/.bashrc" ]; then
             if ! grep -q 'starship init bash' "$HOME/.bashrc"; then
-                echo 'eval "$(starship init bash)"' >> "$HOME/.bashrc"
+                echo "eval \"\$(starship init bash)\"" >> "$HOME/.bashrc"
             fi
         else
-            echo 'eval "$(starship init bash)"' >> "$HOME/.bashrc"
+            echo "eval \"\$(starship init bash)\"" >> "$HOME/.bashrc"
         fi
         if [ ! -d "$HOME/.config" ]; then
             mkdir -p "$HOME/.config"
@@ -504,10 +515,10 @@ setup_pkgs_option() {
                 if command -v starship &> /dev/null; then
                     if [ -f "$HOME/.bashrc" ]; then
                         if ! grep -q 'starship init bash' "$HOME/.bashrc"; then
-                            echo 'eval "$(starship init bash)"' >> "$HOME/.bashrc"
+                            echo "eval \"\$(starship init bash)\"" >> "$HOME/.bashrc"
                         fi
                     else
-                        echo 'eval "$(starship init bash)"' >> "$HOME/.bashrc"
+                        echo "eval \"\$(starship init bash)\"" >> "$HOME/.bashrc"
                     fi
                     if [ ! -d "$HOME/.config" ]; then
                         mkdir -p "$HOME/.config"
@@ -553,8 +564,12 @@ setup_pkgs_option() {
                     $USE_SUDO tailscale up --qr
                     if gum confirm "Do you want this environment to be an exit node?"; then
                         $USE_SUDO tailscale set --advertise-exit-node=true
-                        echo 'net.ipv4.ip_forward = 1' | $USE_SUDO tee -a /etc/sysctl.d/99-tailscale.conf
-                        echo 'net.ipv6.conf.all.forwarding = 1' | $USE_SUDO tee -a /etc/sysctl.d/99-tailscale.conf
+                        $USE_SUDO touch /etc/sysctl.d/99-tailscale.conf
+                        $USE_SUDO sed -i '/^net\.ipv4\.ip_forward\s*=/d;/^net\.ipv6\.conf\.all\.forwarding\s*=/d' /etc/sysctl.d/99-tailscale.conf
+                        {
+                            echo 'net.ipv4.ip_forward = 1'
+                            echo 'net.ipv6.conf.all.forwarding = 1'
+                        } | $USE_SUDO tee -a /etc/sysctl.d/99-tailscale.conf >/dev/null
                         $USE_SUDO sysctl -p /etc/sysctl.d/99-tailscale.conf
                     else
                         $USE_SUDO tailscale set --advertise-exit-node=false
@@ -619,8 +634,8 @@ setup_pkgs_option() {
                                 echo " Warning: Claude Code installation verification failed."
                             fi
                             ;;
-                        "Codex from OpenAI")
-                            gum style --foreground 57 --padding "1 1" "Installing Codex..."
+                        "Codex CLI from OpenAI")
+                            gum style --foreground 57 --padding "1 1" "Installing Codex CLI from OpenAI..."
                             if command -v npm &> /dev/null; then
                                 if ! $SUDO_CMD npm install -g @openai/codex 2>/dev/null; then
                                     echo " Warning: Failed to install codex via npm."
@@ -716,10 +731,14 @@ setup_pkgs_option() {
 
 setup_ssh() {
     local SUDO_CMD="${USE_SUDO:-}"
-    export DEBIAN_FRONTEND=noninteractive
+    local SSH_PORT
+    local HAS_SSH_KEYS=0
     gum style --foreground 57 --padding "1 1" "Configuring SSH..."
     if [ ! -f /etc/ssh/sshd_config.bak ]; then
         $SUDO_CMD cp /etc/ssh/sshd_config /etc/ssh/sshd_config.bak
+    fi
+    if [ -s "$HOME/.ssh/authorized_keys" ] || $SUDO_CMD test -s /root/.ssh/authorized_keys 2>/dev/null; then
+        HAS_SSH_KEYS=1
     fi
     if gum confirm "Do you want to change the default SSH port? (default is 22)"; then
         SSH_PORT=$(gum input --placeholder "Enter new SSH port")
@@ -741,13 +760,36 @@ setup_ssh() {
         fi
     fi
     if gum confirm "Do you want to disable password authentication for SSH?"; then
-        if grep -qE '^#?PasswordAuthentication ' /etc/ssh/sshd_config; then
+        if [ "$HAS_SSH_KEYS" -eq 0 ]; then
+            gum style --foreground 196 --padding "1 1" "No authorized_keys were detected for $USER or root."
+            if ! gum confirm "Disable SSH password authentication anyway?"; then
+                gum style --foreground 57 --padding "1 1" "Skipping password authentication change."
+            elif grep -qE '^#?PasswordAuthentication ' /etc/ssh/sshd_config; then
+                $SUDO_CMD sed -i "s/^#*PasswordAuthentication .*/PasswordAuthentication no/" /etc/ssh/sshd_config
+            else
+                echo "PasswordAuthentication no" | $SUDO_CMD tee -a /etc/ssh/sshd_config > /dev/null
+            fi
+        elif grep -qE '^#?PasswordAuthentication ' /etc/ssh/sshd_config; then
             $SUDO_CMD sed -i "s/^#*PasswordAuthentication .*/PasswordAuthentication no/" /etc/ssh/sshd_config
         else
             echo "PasswordAuthentication no" | $SUDO_CMD tee -a /etc/ssh/sshd_config > /dev/null
         fi
     fi
-    $SUDO_CMD systemctl restart sshd
+    if command -v sshd &> /dev/null; then
+        if ! $SUDO_CMD sshd -t -f /etc/ssh/sshd_config; then
+            echo " Error: sshd_config validation failed. Restoring backup."
+            $SUDO_CMD cp /etc/ssh/sshd_config.bak /etc/ssh/sshd_config
+            exit 1
+        fi
+    else
+        echo " Warning: sshd binary not found. Skipping config validation."
+    fi
+    if ! $SUDO_CMD systemctl restart ssh 2>/dev/null; then
+        if ! $SUDO_CMD systemctl restart sshd; then
+            echo " Error: Failed to restart SSH service."
+            exit 1
+        fi
+    fi
     gum style --foreground 212 --padding "1 1" "SSH configuration completed."
 }
 
@@ -807,28 +849,39 @@ sidekick_setup_automatic() {
 }
 
 sidekick_secure_interactive() {
-    echo "I'm a placeholder for the security script."
-    read -p "Press [Enter] to continue..."
+    setup_ssh
 }
 
 sidekick_prompt_interactive() {
     echo "I'm a placeholder for the local starship prompt config."
-    read -p "Press [Enter] to continue..."
+    read -r -p "Press [Enter] to continue..."
 }
 
 sidekick_upgrade_interactive() {
     echo "I'm a placeholder for the version upgrade script."
-    read -p "Press [Enter] to continue..."
+    read -r -p "Press [Enter] to continue..."
 }
 
 sidekick_update_interactive() {
-    echo "I'm a placeholder for the interactive update script."
-    read -p "Press [Enter] to continue..."
+    local UPDATE_CHOICE
+    UPDATE_CHOICE=$(gum choose \
+        "Simple package update (safe defaults)" \
+        "Full package update and cleanup")
+    case $UPDATE_CHOICE in
+        "Simple package update (safe defaults)")
+            apt_update_simple
+            ;;
+        "Full package update and cleanup")
+            apt_update_full
+            ;;
+        "")
+            gum style --foreground 57 --padding "1 1" "Nothing selected, skipping update."
+            ;;
+    esac
 }
 
 sidekick_update_automatic() {
-    echo "I'm a placeholder for the automatic update script."
-    read -p "Press [Enter] to continue..."
+    apt_update_full
 }
 
 # +---------------------------------------------------------------------------+
