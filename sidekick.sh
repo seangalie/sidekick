@@ -18,13 +18,20 @@ set -euo pipefail
 # |     Common Functions for the different configuration and update tools.    |
 # +---------------------------------------------------------------------------+
 
-# Ping Google to check for Internet Connectivity
+# Check internet connectivity using TCP first, with ICMP as a fallback
 
 check_connection() {
-    ping -c 1 8.8.8.8 &> /dev/null || {
-        echo " Error: No internet connection detected.";
-        exit 1;
-    }
+    local CONNECT_TIMEOUT=3
+    if command -v timeout &> /dev/null; then
+        timeout "$CONNECT_TIMEOUT" bash -c 'cat </dev/null >/dev/tcp/deb.debian.org/443' &> /dev/null && return 0
+        timeout "$CONNECT_TIMEOUT" bash -c 'cat </dev/null >/dev/tcp/1.1.1.1/443' &> /dev/null && return 0
+    else
+        bash -c 'cat </dev/null >/dev/tcp/deb.debian.org/443' &> /dev/null && return 0
+        bash -c 'cat </dev/null >/dev/tcp/1.1.1.1/443' &> /dev/null && return 0
+    fi
+    ping -c 1 -W 2 8.8.8.8 &> /dev/null && return 0
+    echo " Error: No internet connection detected."
+    exit 1
 }
 
 # Check for superuser permissions or root-level shell access
